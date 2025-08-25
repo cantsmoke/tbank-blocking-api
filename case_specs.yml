@@ -1,0 +1,452 @@
+openapi: 3.0.3
+info:
+  title: T-Bank - Payment Blocking API
+  version: "1.0.0"
+  description: |
+    API для оперативной приостановки и восстановления отправки платежей от юридического лица,
+    с возможностью проверять статус блокировки и различать блокировки по причинам
+    (мошенничество/неверные реквизиты/ручные блокировки/комплайенс).
+  contact:
+    name: Кузнецов Арсений
+    url: https://github.com/cantsmoke
+servers:
+  - url: https://api.tbank.local/v1
+    description: Тестовая среда
+  - url: https://api.tbank.ru/v1
+    description: Production среда
+
+tags:
+  - name: clients
+    description: Операции над клиентами и блокировками их платежей
+
+security:
+  - bearerAuth: []
+
+paths:
+
+  /clients/{clientId}/blocks:
+    post:
+      tags: [clients]
+      summary: Заблокировать платежи клиента
+      description: |
+        Создаёт блокировку, которая переводит все новые исходящие платежи клиента в состояние "Hold".
+        Если у клиента уже есть активная блокировка с тем же типом - возвращается 409.
+      operationId: createBlock
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/clientId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BlockCreateRequest'
+            examples:
+              fraud_suspected:
+                summary: Блокировка - подозрение на мошенничество
+                value:
+                  type: fraud_suspected
+                  initiator: system
+                  reason_text: "Подозрение на мошенническую активность."
+
+      responses:
+        '201':
+          description: Блокировка создана
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BlockCreated'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          description: Конфликт - активная блокировка с такими параметрами уже существует
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+    get:
+      tags: [clients]
+      summary: Получить историю блокировок клиента
+      description: Возвращает историю всех блокировок (активных и снятых) для клиента.
+      operationId: listClientBlocks
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/clientId'
+        - name: status
+          in: query
+          description: Фильтр по статусу блокировки
+          schema:
+            $ref: '#/components/schemas/BlockStatus'
+        - name: type
+          in: query
+          description: Фильтр по типу блокировки
+          schema:
+            $ref: '#/components/schemas/BlockType'
+      responses:
+        '200':
+          description: Список блокировок
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  total:
+                    type: integer
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Block'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /clients/{clientId}/blocks/active:
+    get:
+      tags: [clients]
+      summary: Получить активную блокировку клиента
+      description: Возвращает активную блокировку (если их несколько - последнюю по времени).
+      operationId: getActiveBlock
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/clientId'
+      responses:
+        '200':
+          description: Активная блокировка
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/Block'
+                  - nullable: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: Активная блокировка не найдена
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /clients/{clientId}/blocks/{blockId}:
+    get:
+      tags: [clients]
+      summary: Получить детали конкретной блокировки
+      operationId: getBlockById
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/clientId'
+        - $ref: '#/components/parameters/blockId'
+      responses:
+        '200':
+          description: Детали блокировки
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Block'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+    post:
+      tags: [clients]
+      summary: Снять конкретную блокировку
+      description: |
+        Снимает указанную блокировку. Если блокировка уже снята - возвращает 409.
+        При снятии указываются инициатор разблокировки и комментарий.
+      operationId: unblockById
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/clientId'
+        - $ref: '#/components/parameters/blockId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BlockUnblockRequest'
+            examples:
+              manual_unblock:
+                value:
+                  initiator: operator
+                  initiator_id: "op-42"
+                  comment: "Снято по решению отдела комплайенс"
+      responses:
+        '200':
+          description: Блокировка снята
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Block'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Блокировка уже снята
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /clients/{clientId}/status:
+    get:
+      tags: [clients]
+      summary: Проверить, заблокирован ли клиент
+      description: |
+        Возвращает краткую информацию: есть ли активная блокировка, почему и id активной блокировки.
+      operationId: checkClientStatus
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/clientId'
+      responses:
+        '200':
+          description: Статус клиента
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  client_id:
+                    type: string
+                  is_blocked:
+                    type: boolean
+                  active_block:
+                    nullable: true
+                    $ref: '#/components/schemas/BlockSummary'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  parameters:
+    clientId:
+      name: clientId
+      in: path
+      required: true
+      schema:
+        type: string
+      description: Идентификатор клиента
+    blockId:
+      name: blockId
+      in: path
+      required: true
+      schema:
+        type: string
+      description: Идентификатор блокировки
+
+  schemas:
+
+    BlockCreated:
+      type: object
+      properties:
+        id:
+          type: string
+          description: Идентификатор блокировки
+        client_id:
+          type: string
+        initiator:
+          type: string
+          description: "system | operator | compliance | external"
+        initiator_id:
+          type: string
+          nullable: true
+          description: ID оператора/процесса, инициировавшего действие
+        type:
+          $ref: '#/components/schemas/BlockType'
+        reason_text:
+          type: string
+        status:
+          $ref: '#/components/schemas/BlockStatus'
+        created_at:
+          type: string
+          format: date-time
+      required: [id, client_id, type, status, created_at]
+      
+    Block:
+      type: object
+      properties:
+        id:
+          type: string
+          description: Идентификатор блокировки
+        client_id:
+          type: string
+        initiator:
+          type: string
+          description: "system | operator | compliance | external"
+        initiator_id:
+          type: string
+          nullable: true
+          description: ID оператора/процесса, инициировавшего действие
+        type:
+          $ref: '#/components/schemas/BlockType'
+        reason_text:
+          type: string
+        status:
+          $ref: '#/components/schemas/BlockStatus'
+        created_at:
+          type: string
+          format: date-time
+        released_at:
+          type: string
+          format: date-time
+          nullable: true
+        released_by:
+          type: string
+          nullable: true
+      required: [id, client_id, type, status, created_at]
+
+    BlockSummary:
+      type: object
+      properties:
+        id:
+          type: string
+        type:
+          $ref: '#/components/schemas/BlockType'
+        reason_text:
+          type: string
+        status:
+          $ref: '#/components/schemas/BlockStatus'
+        created_at:
+          type: string
+          format: date-time
+
+    BlockCreateRequest:
+      type: object
+      properties:
+        type:
+          $ref: '#/components/schemas/BlockType'
+        initiator:
+          type: string
+          enum: [system, operator, compliance, external]
+        initiator_id:
+          type: string
+          nullable: true
+        reason_text:
+          type: string
+      required: [type, initiator, reason_text]
+
+    BlockUnblockRequest:
+      type: object
+      properties:
+        initiator:
+          type: string
+          enum: [operator, compliance, system]
+        initiator_id:
+          type: string
+          nullable: true
+        comment:
+          type: string
+      required: [initiator]
+
+    BlockType:
+      type: string
+      enum:
+        - fraud_suspected
+        - fraud_confirmed
+        - wrong_requisites
+        - manual
+        - compliance_review
+      description: |
+        Тип/причина блокировки. 
+        - fraud_suspected - система подозревает мошенничество (hold до расследования);
+        - fraud_confirmed - мошенничество подтверждено;
+        - wrong_requisites - неверные реквизиты получателя;
+        - manual - ручная блокировка оператора;
+        - compliance_review - блокировка по решению комплайенс.
+
+    BlockStatus:
+      type: string
+      enum: [active, released, pending]
+      description: Статус блокировки
+
+    Error:
+      type: object
+      properties:
+        code:
+          type: string
+        message:
+          type: string
+        details:
+          type: object
+      required: [code, message]
+
+  responses:
+    BadRequest:
+      description: Неверный запрос
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            code: bad_request
+            message: "Некорректный payload: отсутствует поле 'type'"
+    Unauthorized:
+      description: Не авторизован
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            code: unauthorized
+            message: "Заголовок авторизации отсутствует или недействителен"
+    Forbidden:
+      description: Доступ запрещён
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            code: forbidden
+            message: "Пользователь не имеет прав на снятие блокировки"
+    NotFound:
+      description: Не найден ресурс
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            code: not_found
+            message: "Клиент или блокировка не найдены"
+    InternalError:
+      description: Внутренняя ошибка сервера
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            code: internal_error
+            message: "Непредвиденная ошибка"

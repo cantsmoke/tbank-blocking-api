@@ -13,7 +13,7 @@ API для управления блокировками платежей юри
 ## Содержимое
 
 - ''
-- [`openapi.yaml`](/case_specs.pdf) — спецификация API в формате OpenAPI 3.0.3.
+- [`openapi.yaml`](/case_specs.yml) — спецификация API в формате OpenAPI 3.0.3.
 
 ---
 
